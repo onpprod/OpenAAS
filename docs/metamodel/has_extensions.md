@@ -1,0 +1,1 @@
+:::openaas.metamodel.has_extensions.HasExtensions

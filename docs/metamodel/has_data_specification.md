@@ -1,0 +1,1 @@
+:::openaas.metamodel.has_data_specification.HasDataSpecification

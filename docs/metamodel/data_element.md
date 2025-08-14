@@ -1,0 +1,1 @@
+:::openaas.metamodel.administrative_information.AdministrativeInformation

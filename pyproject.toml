@@ -1,0 +1,54 @@
+[project]
+name = "openaas"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "onpprod",email = "otavionpproducoes@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13,<4.0"
+dependencies = [
+    "pydantic (>=2.11.7,<3.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "openaas", from = "src"}]
+
+
+[tool.poetry.group.dev.dependencies]
+pytest-cov = "^6.2.1"
+isort = "^6.0.1"
+blue = "^0.9.1"
+taskipy = "^1.14.1"
+bandit = "^1.8.6"
+mypy = "^1.17.1"
+pytest-asyncio = "^1.1.0"
+
+
+[tool.poetry.group.doc.dependencies]
+mkdocs-material = "^9.6.16"
+mkdocstrings-python = "^1.16.12"
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+pythonpath = "."
+addopts = "--doctest-modules"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.isort]
+profile = "black"
+line_length = 79
+
+[tool.taskipy.tasks]
+lint = "blue --check --diff . && isort --check --diff ."
+lint_apply = "blue . && isort ."
+docs = "mkdocs serve"
+test = "pytest -s -x --cov=src -vv"
+post_test = "coverage html"
+secure = "bandit -r ./src -c pyproject.toml"
+static = "mypy --ignore-missing-imports src"

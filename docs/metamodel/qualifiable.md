@@ -1,0 +1,1 @@
+:::openaas.metamodel.qualifiable.Qualifiable
