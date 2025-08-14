@@ -1,0 +1,1 @@
+:::openaas.metamodel.asset_information.AssetInformation

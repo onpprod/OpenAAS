@@ -1,0 +1,1 @@
+:::openaas.metamodel.asset_administration_shell.AssetAdministrationShell

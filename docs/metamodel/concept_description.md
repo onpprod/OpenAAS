@@ -1,0 +1,1 @@
+:::openaas.metamodel.concept_description.ConceptDescription
