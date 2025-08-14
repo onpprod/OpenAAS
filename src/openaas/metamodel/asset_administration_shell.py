@@ -12,7 +12,8 @@ from openaas.metamodel.asset_information import AssetInformation
 
 
 class AssetAdministrationShell(Identifiable, HasDataSpecification):
-    """Shell que representa digitalmente um ativo.
+    """
+    Shell que representa digitalmente um ativo.
 
     Attributes:
         assetInformation: Informações do ativo (obrigatório).
