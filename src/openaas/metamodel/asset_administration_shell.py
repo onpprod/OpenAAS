@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
 from openaas.metamodel.identifiable import Identifiable
 from openaas.metamodel.has_data_specification import HasDataSpecification
