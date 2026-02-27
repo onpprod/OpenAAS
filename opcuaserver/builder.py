@@ -417,6 +417,8 @@ async def _add_submodel(
             path=f"{path}.submodelElements[{index}]",
         )
 
+    await _add_category_property(submodel_node, namespace_idx, submodel)
+
 
 async def _add_submodel_element(
     parent: Any,
@@ -476,16 +478,17 @@ async def _add_submodel_element(
                 allocator,
                 path=f"{path}.children[{index}]",
             )
-        return
+    else:
+        await _add_scalar_metadata_variables(
+            object_node,
+            element,
+            namespace_idx,
+            allocator,
+            path=path,
+            writable=_is_writable(element),
+        )
 
-    await _add_scalar_metadata_variables(
-        object_node,
-        element,
-        namespace_idx,
-        allocator,
-        path=path,
-        writable=_is_writable(element),
-    )
+    await _add_category_property(object_node, namespace_idx, element)
 
 
 async def _add_operation_element(
@@ -532,6 +535,8 @@ async def _add_operation_element(
                 allocator,
             )
 
+    await _add_category_property(operation_node, namespace_idx, element)
+
 
 async def _add_range_element(
     parent: Any,
@@ -564,6 +569,8 @@ async def _add_range_element(
         if writable:
             await variable.set_writable()
 
+    await _add_category_property(range_node, namespace_idx, element)
+
 
 async def _add_value_element(
     parent: Any,
@@ -586,6 +593,7 @@ async def _add_value_element(
         variant_type,
         allocator,
     )
+    await _add_category_property(variable, namespace_idx, element)
 
     if _is_writable(element):
         await variable.set_writable()
@@ -620,6 +628,23 @@ async def _add_scalar_metadata_variables(
         )
         if writable:
             await variable.set_writable()
+
+
+async def _add_category_property(
+    node: Any,
+    namespace_idx: int,
+    element: dict[str, Any],
+) -> None:
+    category = _non_empty_text(element.get("category"))
+    if not category:
+        return
+
+    try:
+        await node.add_property(namespace_idx, "category", category, ua.VariantType.String)
+    except Exception as exc:
+        if _is_duplicate_browse_name_error(exc):
+            return
+        raise
 
 
 def _extract_child_elements(element: dict[str, Any], path: str) -> list[dict[str, Any]]:

@@ -17,13 +17,14 @@ dependencies = [
 [project.scripts]
 opcuaserver = "opcuaserver.cli:main"
 opcualoader = "opcualoader.cli:main"
+aasxpackage = "aasxpackage.cli:main"
 
 [tool.poetry]
 packages = [
-    { include = "openaas" },
-    { include = "openopc" },
+    { include = "aasmodel" },
     { include = "opcuaserver" },
-    { include = "opcualoader" }
+    { include = "opcualoader" },
+    { include = "aasxpackage" }
 ]
 
 

@@ -1,10 +1,10 @@
-"""Create a minimal AAS Environment model using OpenAAS Pydantic classes."""
+"""Create a minimal AAS Environment model using aasmodel Pydantic classes."""
 
 from __future__ import annotations
 
 import json
 
-from openaas import (
+from aasmodel import (
     AssetAdministrationShell,
     AssetInformation,
     AssetKind,
@@ -73,3 +73,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

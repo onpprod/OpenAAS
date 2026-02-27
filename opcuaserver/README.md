@@ -1,31 +1,180 @@
 # OPCUAServer
 
-`opcuaserver` creates an OPC UA server from an **AAS Environment JSON**.
+`opcuaserver` builds and runs an OPC UA server from an AAS Environment JSON document.
 
-The input JSON is validated against `schemas/aas.json` before node creation.
+The input JSON is validated against `schemas/aas.json` before node creation (unless you only call lower-level APIs with custom validation flow).
 
 ## Features
 
-- AAS schema validation.
-- Recursive mapping of AAS submodels/submodel elements to OPC UA nodes.
-- Editable OPC UA variables when `category == "VARIABLE"`.
-- CLI for running the server.
-- Optional username/password authentication.
+- Validates AAS JSON using the project schema.
+- Builds an OPC UA tree under `Objects/AAS`.
+- Maps AAS submodels and submodel elements recursively.
+- Supports anonymous mode and username/password mode.
+- Supports mixed mode (username/password plus optional anonymous).
+- Marks variables writable when `category == "VARIABLE"`.
+- Publishes `category` as explicit OPC UA metadata (`Property` node named `category`).
 
-## CLI
+## Requirements
+
+- Python 3.13+
+- Project dependencies installed (`pip install -e .` or equivalent)
+
+## CLI Usage
+
+Start a server with default endpoint:
 
 ```bash
 opcuaserver examples/aas-environment.json
 ```
 
-Validate only:
+Validate JSON only (do not start server):
 
 ```bash
 opcuaserver examples/aas-environment.json --validate-only
 ```
 
-Run with username/password:
+Run with username/password authentication:
 
 ```bash
 opcuaserver examples/aas-environment.json --username admin --password secret
 ```
+
+Run with username/password and allow anonymous sessions too:
+
+```bash
+opcuaserver examples/aas-environment.json --username admin --password secret --allow-anonymous
+```
+
+Use custom endpoint, name, and namespace URI:
+
+```bash
+opcuaserver examples/aas-environment.json \
+  --endpoint opc.tcp://0.0.0.0:4842/opcuaserver/server/ \
+  --name "My OPC UA Server" \
+  --namespace-uri "http://example.local/aas"
+```
+
+## CLI Options
+
+- `aas_json` (positional): path to the AAS Environment JSON.
+- `--schema`: path to JSON schema. Default: `schemas/aas.json`.
+- `--endpoint`: OPC UA endpoint URL. Default: `opc.tcp://0.0.0.0:4841/opcuaserver/server/`.
+- `--name`: server display name. Default: `OPCUAServer`.
+- `--namespace-uri`: namespace URI for created nodes. Default: `http://opcuaserver.local/aas`.
+- `--username`: username for authenticated mode.
+- `--password`: password for authenticated mode.
+- `--allow-anonymous`: in authenticated mode, also accept anonymous sessions.
+- `--validate-only`: validate JSON and exit.
+- `--no-password-prompt`: disable prompt when `--username` is set without `--password`.
+
+## Authentication Behavior
+
+- No `--username/--password`: anonymous-only server.
+- `--username` and `--password`: username/password server.
+- `--username` and `--password` plus `--allow-anonymous`: mixed mode.
+- `--allow-anonymous` without `--username`: ignored by CLI (server remains anonymous-only).
+
+## AAS to OPC UA Mapping
+
+Root:
+- The server creates `Objects/AAS`.
+
+Asset Administration Shell:
+- Each AAS is created as an OPC UA object.
+- A `Submodels` folder is created under each AAS object.
+
+Submodel:
+- Created as an OPC UA object.
+- If `category` exists in JSON, a child OPC UA `Property` named `category` is created.
+
+Property and simple value elements:
+- Created as OPC UA variables with type inferred from AAS `valueType`.
+- If `category == "VARIABLE"`, write access is enabled.
+- If `category` exists, a child OPC UA `Property` named `category` is created on the element node.
+
+Range:
+- Created as an OPC UA object containing `min` and `max` variables.
+- If `category == "VARIABLE"`, `min` and `max` are writable.
+- If `category` exists, a child OPC UA `Property` named `category` is created.
+
+Operation:
+- Created as an OPC UA object with `InputVariables`, `OutputVariables`, and `InOutputVariables` folders.
+- If `category` exists, a child OPC UA `Property` named `category` is created.
+
+Collection-like and object elements:
+- Created as OPC UA objects with recursive child elements.
+- Scalar metadata fields (non-structural JSON keys) are exported as variables.
+- If `category` exists, a child OPC UA `Property` named `category` is created.
+
+## Python API
+
+Create and run directly from JSON file:
+
+```python
+import asyncio
+from opcuaserver import create_server_from_aas_json
+
+async def main() -> None:
+    server = await create_server_from_aas_json(
+        "examples/aas-environment.json",
+        endpoint="opc.tcp://0.0.0.0:4841/opcuaserver/server/",
+        username="admin",
+        password="secret",
+        allow_anonymous=False,
+    )
+    async with server:
+        await asyncio.sleep(3600)
+
+asyncio.run(main())
+```
+
+Build from an in-memory dictionary:
+
+```python
+import asyncio
+from opcuaserver import create_server_from_aas_dict
+
+async def main() -> None:
+    env = {"assetAdministrationShells": [], "submodels": []}
+    server = await create_server_from_aas_dict(env)
+    async with server:
+        await asyncio.sleep(60)
+
+asyncio.run(main())
+```
+
+Main exported functions:
+
+- `create_server_from_aas_json(...)`
+- `create_server_from_aas_dict(...)`
+- `populate_from_aas_dict(...)`
+- `validate_aas_environment(...)`
+- `load_aas_environment(...)`
+
+## Validation and Errors
+
+Common exceptions:
+
+- `OPCUASchemaValidationError`: JSON does not match `schemas/aas.json`.
+- `OPCUASpecError`: invalid runtime specification (for example invalid auth combination).
+- `FileNotFoundError`: missing JSON/schema file.
+
+Common error example:
+
+```text
+[opcuaserver] Invalid specification: allow_anonymous=false requires username and password.
+```
+
+Meaning:
+
+- You disabled anonymous access while not providing credentials.
+
+Fix:
+
+- Provide `--username` and `--password`, or do not force anonymous off in API usage.
+
+## Interoperability with `opcualoader`
+
+- `opcuaserver` now writes explicit `category` metadata nodes.
+- `opcualoader` reads these metadata nodes first.
+- If metadata is not present, `opcualoader` falls back to writable/read-only inference.

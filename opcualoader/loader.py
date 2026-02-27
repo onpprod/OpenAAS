@@ -45,6 +45,7 @@ class _NodeInfo:
     node: Any
     name: str
     node_class: ua.NodeClass
+    is_property: bool = False
 
 
 class _IdShortAllocator:
@@ -238,8 +239,10 @@ async def _parse_submodels(
             continue
 
         submodel_path = f"{path_prefix}[{index}]/{submodel_info.name}"
-        submodel_elements = await _parse_node_children_as_elements(
-            submodel_info.node,
+        child_infos = await _get_child_infos(submodel_info.node)
+        element_infos, explicit_category = await _extract_category_child(child_infos)
+        submodel_elements = await _parse_infos_as_elements(
+            element_infos,
             path=f"{submodel_path}/submodelElements",
         )
 
@@ -253,6 +256,8 @@ async def _parse_submodels(
             "kind": "Instance",
             "modelType": "Submodel",
         }
+        if explicit_category:
+            submodel["category"] = explicit_category
         if submodel_elements:
             submodel["submodelElements"] = submodel_elements
 
@@ -304,12 +309,23 @@ async def _parse_element(
         return None
 
     child_infos = await _get_child_infos(node_info.node)
+    child_infos, explicit_category = await _extract_category_child(child_infos)
 
     if await _looks_like_range(child_infos):
-        return await _parse_range(node_info, child_infos, path=path)
+        return await _parse_range(
+            node_info,
+            child_infos,
+            path=path,
+            explicit_category=explicit_category,
+        )
 
     if _looks_like_operation(child_infos):
-        return await _parse_operation(node_info, child_infos, path=path)
+        return await _parse_operation(
+            node_info,
+            child_infos,
+            path=path,
+            explicit_category=explicit_category,
+        )
 
     value = await _parse_infos_as_elements(
         child_infos,
@@ -320,6 +336,8 @@ async def _parse_element(
         "idShort": node_info.name,
         "modelType": "SubmodelElementCollection",
     }
+    if explicit_category:
+        collection["category"] = explicit_category
     if value:
         collection["value"] = value
     return collection
@@ -330,13 +348,16 @@ async def _parse_property(
     *,
     path: str,
 ) -> dict[str, Any]:
+    del path
     variant_type = await _read_variant_type(node_info.node)
     value = await _read_value(node_info.node)
     writable = await _is_writable(node_info.node)
+    explicit_category = await _read_category_metadata(node_info.node)
+    category = explicit_category or ("VARIABLE" if writable else "CONSTANT")
 
     return {
         "idShort": node_info.name,
-        "category": "VARIABLE" if writable else "CONSTANT",
+        "category": category,
         "valueType": _variant_to_xsd(variant_type),
         "value": _value_to_aas_string(value),
         "modelType": "Property",
@@ -348,7 +369,9 @@ async def _parse_range(
     child_infos: list[_NodeInfo],
     *,
     path: str,
+    explicit_category: str | None,
 ) -> dict[str, Any]:
+    del path
     range_item: dict[str, Any] = {
         "idShort": node_info.name,
         "modelType": "Range",
@@ -378,7 +401,9 @@ async def _parse_range(
         else:
             range_item["valueType"] = "xs:string"
 
-    if is_variable:
+    if explicit_category:
+        range_item["category"] = explicit_category
+    elif is_variable:
         range_item["category"] = "VARIABLE"
     else:
         range_item["category"] = "CONSTANT"
@@ -391,11 +416,14 @@ async def _parse_operation(
     child_infos: list[_NodeInfo],
     *,
     path: str,
+    explicit_category: str | None,
 ) -> dict[str, Any]:
     operation: dict[str, Any] = {
         "idShort": node_info.name,
         "modelType": "Operation",
     }
+    if explicit_category:
+        operation["category"] = explicit_category
 
     for child in child_infos:
         key = _OPERATION_GROUPS.get(child.name.lower())
@@ -442,6 +470,22 @@ def _looks_like_operation(child_infos: list[_NodeInfo]) -> bool:
     return True
 
 
+async def _extract_category_child(
+    child_infos: list[_NodeInfo],
+) -> tuple[list[_NodeInfo], str | None]:
+    filtered_children: list[_NodeInfo] = []
+    category: str | None = None
+
+    for child in child_infos:
+        if _is_category_metadata_candidate(child):
+            if category is None:
+                category = _normalize_category_value(await _read_value(child.node))
+            continue
+        filtered_children.append(child)
+
+    return filtered_children, category
+
+
 async def _get_child_infos(node: Any) -> list[_NodeInfo]:
     children = await node.get_children()
     infos: list[_NodeInfo] = []
@@ -452,7 +496,17 @@ async def _get_child_infos(node: Any) -> list[_NodeInfo]:
             if node_class not in {ua.NodeClass.Object, ua.NodeClass.Variable}:
                 continue
             browse_name = await child.read_browse_name()
-            infos.append(_NodeInfo(node=child, name=browse_name.Name, node_class=node_class))
+            is_property = False
+            if node_class == ua.NodeClass.Variable:
+                is_property = await _is_property_node(child)
+            infos.append(
+                _NodeInfo(
+                    node=child,
+                    name=browse_name.Name,
+                    node_class=node_class,
+                    is_property=is_property,
+                )
+            )
         except Exception:
             continue
 
@@ -484,12 +538,48 @@ async def _read_variant_type(node: Any) -> ua.VariantType:
         return ua.VariantType.String
 
 
+async def _read_category_metadata(node: Any) -> str | None:
+    child_infos = await _get_child_infos(node)
+    _, category = await _extract_category_child(child_infos)
+    return category
+
+
 async def _is_writable(node: Any) -> bool:
     try:
         access_levels = await node.get_user_access_level()
         return ua.AccessLevel.CurrentWrite in access_levels
     except Exception:
         return False
+
+
+def _is_category_metadata_candidate(child: _NodeInfo) -> bool:
+    return (
+        child.node_class == ua.NodeClass.Variable
+        and child.is_property
+        and child.name.lower() == "category"
+    )
+
+
+async def _is_property_node(node: Any) -> bool:
+    try:
+        type_definition = await node.read_type_definition()
+    except Exception:
+        return False
+
+    if isinstance(type_definition, ua.NodeId):
+        return type_definition.Identifier == ua.ObjectIds.PropertyType
+
+    return False
+
+
+def _normalize_category_value(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+
+    text = str(raw_value).strip()
+    if not text:
+        return None
+    return text
 
 
 def _variant_to_xsd(variant_type: ua.VariantType) -> str:
