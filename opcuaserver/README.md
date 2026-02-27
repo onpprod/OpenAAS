@@ -12,6 +12,8 @@ The input JSON is validated against `schemas/aas.json` before node creation (unl
 - Supports anonymous mode and username/password mode.
 - Supports mixed mode (username/password plus optional anonymous).
 - Marks variables writable when `category == "VARIABLE"`.
+- Can historize all nodes generated from `category == "VARIABLE"` elements.
+- Supports history backends: memory (default), SQLite, and MongoDB.
 - Publishes `category` as explicit OPC UA metadata (`Property` node named `category`).
 
 ## Requirements
@@ -54,6 +56,29 @@ opcuaserver examples/aas-environment.json \
   --namespace-uri "http://example.local/aas"
 ```
 
+Enable historization in memory (RAM):
+
+```bash
+opcuaserver examples/aas-environment.json --historize
+```
+
+Enable historization persisted in SQLite (`./history.db` by default):
+
+```bash
+opcuaserver examples/aas-environment.json --historize --history-backend sqlite
+```
+
+Enable historization in MongoDB:
+
+```bash
+opcuaserver examples/aas-environment.json \
+  --historize \
+  --history-backend mongodb \
+  --history-mongodb-uri "mongodb://localhost:27017" \
+  --history-mongodb-database openaas \
+  --history-mongodb-collection history
+```
+
 ## CLI Options
 
 - `aas_json` (positional): path to the AAS Environment JSON.
@@ -66,6 +91,16 @@ opcuaserver examples/aas-environment.json \
 - `--allow-anonymous`: in authenticated mode, also accept anonymous sessions.
 - `--validate-only`: validate JSON and exit.
 - `--no-password-prompt`: disable prompt when `--username` is set without `--password`.
+- `--historize`: enable historization for nodes generated from `category == "VARIABLE"`.
+- `--history-backend`: `memory`, `sqlite`, or `mongodb`.
+- `--history-sqlite-file`: SQLite path/filename. Default: `history.db` in current directory.
+- `--history-mongodb-uri`: MongoDB URI.
+- `--history-mongodb-database`: MongoDB database name. Default: `opcuaserver_history`.
+- `--history-mongodb-collection`: MongoDB collection name. Default: `datachanges`.
+- `--history-mongodb-username`: optional MongoDB username.
+- `--history-mongodb-password`: optional MongoDB password.
+- `--history-mongodb-auth-source`: optional MongoDB authSource.
+- `--history-count`: max historical values per node (`0` = unlimited).
 
 ## Authentication Behavior
 
@@ -90,11 +125,13 @@ Submodel:
 Property and simple value elements:
 - Created as OPC UA variables with type inferred from AAS `valueType`.
 - If `category == "VARIABLE"`, write access is enabled.
+- If historization is enabled, these writable nodes are historized for HistoryRead.
 - If `category` exists, a child OPC UA `Property` named `category` is created on the element node.
 
 Range:
 - Created as an OPC UA object containing `min` and `max` variables.
 - If `category == "VARIABLE"`, `min` and `max` are writable.
+- If historization is enabled, writable `min`/`max` variables are historized.
 - If `category` exists, a child OPC UA `Property` named `category` is created.
 
 Operation:

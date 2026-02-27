@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +39,9 @@ _VARIANT_TO_XSD: dict[ua.VariantType, str] = {
     ua.VariantType.Guid: "xs:string",
 }
 
+_LEGACY_METADATA_PAYLOAD_NAME = "__aas_json"
+_LEGACY_METADATA_FIELD_PREFIX = "__aas_meta__"
+
 
 @dataclass
 class _NodeInfo:
@@ -46,6 +49,13 @@ class _NodeInfo:
     name: str
     node_class: ua.NodeClass
     is_property: bool = False
+
+
+@dataclass
+class _NodeMetadata:
+    category: str | None = None
+    fields: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] | None = None
 
 
 class _IdShortAllocator:
@@ -141,13 +151,99 @@ async def _scan_client(client: Client, *, endpoint: str) -> dict[str, Any]:
             "This endpoint does not look like an opcuaserver tree."
         )
 
+    environment = await _scan_environment_root(aas_root, endpoint=endpoint)
+    if environment is not None:
+        return environment
+
+    return await _scan_legacy_root(aas_root, endpoint=endpoint)
+
+
+async def _scan_environment_root(
+    aas_root: Any,
+    *,
+    endpoint: str,
+) -> dict[str, Any] | None:
+    environment_node = await _find_child_by_name(aas_root, "Environment")
+    if environment_node is None:
+        return None
+
+    child_infos = await _get_child_infos(environment_node)
+    child_infos, metadata = await _extract_metadata_children(child_infos)
+
+    environment: dict[str, Any] = {}
+    if isinstance(metadata.payload, dict):
+        environment.update(metadata.payload)
+    if metadata.fields:
+        environment.update(metadata.fields)
+    if metadata.category is not None and "category" not in environment:
+        environment["category"] = metadata.category
+
+    shell_entries: list[dict[str, Any]] = []
+    inline_submodels_by_id: dict[str, dict[str, Any]] = {}
+    shell_folder = _find_info_by_name(child_infos, "AssetAdministrationShells")
+    if shell_folder is not None:
+        shell_nodes = await _get_child_infos(shell_folder.node)
+        shell_allocator = _IdShortAllocator()
+        for index, shell_info in enumerate(shell_nodes):
+            if shell_info.node_class != ua.NodeClass.Object:
+                continue
+            shell, inline_submodels = await _parse_shell(
+                shell_info,
+                endpoint=endpoint,
+                shell_allocator=shell_allocator,
+                path_prefix=f"AAS/Environment/AssetAdministrationShells[{index}]",
+            )
+            shell_entries.append(shell)
+            for submodel in inline_submodels:
+                inline_submodels_by_id[submodel["id"]] = submodel
+
+    submodels_by_id: dict[str, dict[str, Any]] = {}
+    submodel_folder = _find_info_by_name(child_infos, "Submodels")
+    if submodel_folder is not None:
+        submodel_nodes = await _get_child_infos(submodel_folder.node)
+        submodel_entries = await _parse_submodels(
+            submodel_nodes,
+            endpoint=endpoint,
+            path_prefix="AAS/Environment/Submodels",
+        )
+        for submodel in submodel_entries:
+            submodels_by_id[submodel["id"]] = submodel
+
+    for submodel_id, submodel in inline_submodels_by_id.items():
+        submodels_by_id.setdefault(submodel_id, submodel)
+
+    concept_descriptions: list[dict[str, Any]] = []
+    concept_folder = _find_info_by_name(child_infos, "ConceptDescriptions")
+    if concept_folder is not None:
+        concept_nodes = await _get_child_infos(concept_folder.node)
+        concept_descriptions = await _parse_concept_descriptions(
+            concept_nodes,
+            endpoint=endpoint,
+            path_prefix="AAS/Environment/ConceptDescriptions",
+        )
+
+    if shell_entries:
+        environment["assetAdministrationShells"] = shell_entries
+    if submodels_by_id:
+        environment["submodels"] = list(submodels_by_id.values())
+    if concept_descriptions:
+        environment["conceptDescriptions"] = concept_descriptions
+
+    if environment:
+        return environment
+
+    return None
+
+
+async def _scan_legacy_root(aas_root: Any, *, endpoint: str) -> dict[str, Any]:
     root_children = await _get_child_infos(aas_root)
     shell_allocator = _IdShortAllocator()
 
     shell_entries: list[dict[str, Any]] = []
     submodels_by_id: dict[str, dict[str, Any]] = {}
+    concept_descriptions: list[dict[str, Any]] = []
 
-    for root_child in root_children:
+    for root_index, root_child in enumerate(root_children):
         lowered = root_child.name.lower()
         if lowered in {"submodels", "unlinkedsubmodels"}:
             submodel_nodes = await _get_child_infos(root_child.node)
@@ -160,6 +256,15 @@ async def _scan_client(client: Client, *, endpoint: str) -> dict[str, Any]:
                 submodels_by_id[submodel["id"]] = submodel
             continue
 
+        if lowered == "conceptdescriptions":
+            concept_nodes = await _get_child_infos(root_child.node)
+            concept_descriptions = await _parse_concept_descriptions(
+                concept_nodes,
+                endpoint=endpoint,
+                path_prefix=f"AAS/{root_child.name}",
+            )
+            continue
+
         if root_child.node_class != ua.NodeClass.Object:
             continue
 
@@ -167,6 +272,7 @@ async def _scan_client(client: Client, *, endpoint: str) -> dict[str, Any]:
             root_child,
             endpoint=endpoint,
             shell_allocator=shell_allocator,
+            path_prefix=f"AAS/{root_child.name}[{root_index}]",
         )
         shell_entries.append(shell)
         for submodel in submodels:
@@ -177,6 +283,8 @@ async def _scan_client(client: Client, *, endpoint: str) -> dict[str, Any]:
         environment["assetAdministrationShells"] = shell_entries
     if submodels_by_id:
         environment["submodels"] = list(submodels_by_id.values())
+    if concept_descriptions:
+        environment["conceptDescriptions"] = concept_descriptions
 
     if not environment:
         raise OPCUALoaderSpecError(
@@ -191,36 +299,68 @@ async def _parse_shell(
     *,
     endpoint: str,
     shell_allocator: _IdShortAllocator,
+    path_prefix: str,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    shell_path = f"AAS/{shell_info.name}"
-    shell_id_short = shell_allocator.allocate(shell_info.name)
-    shell_id = _make_urn_uuid(endpoint, "aas-shell", f"{shell_path}|{shell_info.node.nodeid}")
+    shell_path = f"{path_prefix}/{shell_info.name}"
 
-    submodels_folder = await _find_child_by_name(shell_info.node, "Submodels")
+    child_infos = await _get_child_infos(shell_info.node)
+    child_infos, metadata = await _extract_metadata_children(child_infos)
+
+    shell = _model_from_metadata(metadata) or {}
+
+    shell_id_short = _non_empty_text(shell.get("idShort"))
+    if shell_id_short is None:
+        shell_id_short = shell_allocator.allocate(shell_info.name)
+    shell["idShort"] = shell_id_short
+
+    shell_id = _non_empty_text(shell.get("id"))
+    if shell_id is None:
+        shell_id = _make_urn_uuid(
+            endpoint,
+            "aas-shell",
+            f"{shell_path}|{shell_info.node.nodeid}",
+        )
+    shell["id"] = shell_id
+
+    if metadata.category is not None:
+        shell["category"] = metadata.category
+
     submodels: list[dict[str, Any]] = []
-    submodel_refs: list[dict[str, Any]] = []
 
-    if submodels_folder is not None:
-        submodel_nodes = await _get_child_infos(submodels_folder)
+    legacy_submodels_folder = _find_info_by_name(child_infos, "Submodels")
+    if legacy_submodels_folder is not None:
+        legacy_submodel_nodes = await _get_child_infos(legacy_submodels_folder.node)
         submodels = await _parse_submodels(
-            submodel_nodes,
+            legacy_submodel_nodes,
             endpoint=endpoint,
             path_prefix=f"{shell_path}/Submodels",
         )
-        for submodel in submodels:
-            submodel_refs.append(_make_submodel_reference(submodel["id"]))
 
-    shell: dict[str, Any] = {
-        "idShort": shell_id_short,
-        "id": shell_id,
-        "assetInformation": {
+    submodel_references_folder = _find_info_by_name(child_infos, "SubmodelReferences")
+    parsed_submodel_refs: list[dict[str, Any]] = []
+    if submodel_references_folder is not None:
+        parsed_submodel_refs = await _parse_reference_nodes(submodel_references_folder.node)
+
+    if "submodels" not in shell:
+        if parsed_submodel_refs:
+            shell["submodels"] = parsed_submodel_refs
+        elif submodels:
+            shell["submodels"] = [_make_submodel_reference(sm["id"]) for sm in submodels]
+
+    asset_information_node = _find_info_by_name(child_infos, "AssetInformation")
+    if asset_information_node is not None and "assetInformation" not in shell:
+        asset_information = await _parse_metadata_object(asset_information_node.node)
+        if asset_information is not None:
+            shell["assetInformation"] = asset_information
+
+    if "assetInformation" not in shell:
+        shell["assetInformation"] = {
             "assetKind": "Instance",
             "globalAssetId": f"urn:opcuaserver:asset:{shell_id_short}",
-        },
-        "modelType": "AssetAdministrationShell",
-    }
-    if submodel_refs:
-        shell["submodels"] = submodel_refs
+        }
+
+    if "modelType" not in shell:
+        shell["modelType"] = "AssetAdministrationShell"
 
     return shell, submodels
 
@@ -240,30 +380,124 @@ async def _parse_submodels(
 
         submodel_path = f"{path_prefix}[{index}]/{submodel_info.name}"
         child_infos = await _get_child_infos(submodel_info.node)
-        element_infos, explicit_category = await _extract_category_child(child_infos)
-        submodel_elements = await _parse_infos_as_elements(
-            element_infos,
-            path=f"{submodel_path}/submodelElements",
-        )
+        child_infos, metadata = await _extract_metadata_children(child_infos)
 
-        submodel: dict[str, Any] = {
-            "idShort": id_short_allocator.allocate(submodel_info.name),
-            "id": _make_urn_uuid(
+        submodel = _model_from_metadata(metadata) or {}
+
+        has_payload = metadata.payload is not None
+        if not has_payload or "submodelElements" not in submodel:
+            element_infos = await _extract_submodel_element_infos(child_infos)
+            submodel_elements = await _parse_infos_as_elements(
+                element_infos,
+                path=f"{submodel_path}/submodelElements",
+            )
+            if submodel_elements:
+                submodel["submodelElements"] = submodel_elements
+
+        if metadata.category is not None:
+            submodel["category"] = metadata.category
+
+        submodel_id_short = _non_empty_text(submodel.get("idShort"))
+        if submodel_id_short is None:
+            submodel_id_short = id_short_allocator.allocate(submodel_info.name)
+        submodel["idShort"] = submodel_id_short
+
+        submodel_id = _non_empty_text(submodel.get("id"))
+        if submodel_id is None:
+            submodel_id = _make_urn_uuid(
                 endpoint,
                 "submodel",
                 f"{submodel_path}|{submodel_info.node.nodeid}",
-            ),
-            "kind": "Instance",
-            "modelType": "Submodel",
-        }
-        if explicit_category:
-            submodel["category"] = explicit_category
-        if submodel_elements:
-            submodel["submodelElements"] = submodel_elements
+            )
+        submodel["id"] = submodel_id
+
+        if "kind" not in submodel:
+            submodel["kind"] = "Instance"
+        if "modelType" not in submodel:
+            submodel["modelType"] = "Submodel"
 
         submodels.append(submodel)
 
     return submodels
+
+
+async def _parse_concept_descriptions(
+    concept_nodes: list[_NodeInfo],
+    *,
+    endpoint: str,
+    path_prefix: str,
+) -> list[dict[str, Any]]:
+    concept_descriptions: list[dict[str, Any]] = []
+    id_short_allocator = _IdShortAllocator()
+
+    for index, concept_info in enumerate(concept_nodes):
+        if concept_info.node_class != ua.NodeClass.Object:
+            continue
+
+        concept_path = f"{path_prefix}[{index}]/{concept_info.name}"
+        child_infos = await _get_child_infos(concept_info.node)
+        _, metadata = await _extract_metadata_children(child_infos)
+
+        concept = _model_from_metadata(metadata) or {}
+
+        if metadata.category is not None:
+            concept["category"] = metadata.category
+
+        concept_id_short = _non_empty_text(concept.get("idShort"))
+        if concept_id_short is None:
+            concept_id_short = id_short_allocator.allocate(concept_info.name)
+        concept["idShort"] = concept_id_short
+
+        concept_id = _non_empty_text(concept.get("id"))
+        if concept_id is None:
+            concept_id = _make_urn_uuid(
+                endpoint,
+                "concept-description",
+                f"{concept_path}|{concept_info.node.nodeid}",
+            )
+        concept["id"] = concept_id
+
+        if "modelType" not in concept:
+            concept["modelType"] = "ConceptDescription"
+
+        concept_descriptions.append(concept)
+
+    return concept_descriptions
+
+
+async def _parse_reference_nodes(parent_node: Any) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
+    child_infos = await _get_child_infos(parent_node)
+
+    for index, child_info in enumerate(child_infos):
+        if child_info.node_class != ua.NodeClass.Object:
+            continue
+
+        reference = await _parse_metadata_object(child_info.node)
+        if reference is None:
+            reference = _make_submodel_reference(
+                _make_urn_uuid(
+                    "opcuaserver",
+                    "submodel-ref",
+                    f"{child_info.name}|{index}|{child_info.node.nodeid}",
+                )
+            )
+        references.append(reference)
+
+    return references
+
+
+async def _parse_metadata_object(node: Any) -> dict[str, Any] | None:
+    child_infos = await _get_child_infos(node)
+    _, metadata = await _extract_metadata_children(child_infos)
+    return _model_from_metadata(metadata)
+
+
+async def _extract_submodel_element_infos(child_infos: list[_NodeInfo]) -> list[_NodeInfo]:
+    submodel_elements_folder = _find_info_by_name(child_infos, "SubmodelElements")
+    if submodel_elements_folder is None:
+        return child_infos
+    return await _get_child_infos(submodel_elements_folder.node)
 
 
 async def _parse_node_children_as_elements(
@@ -291,7 +525,11 @@ async def _parse_infos_as_elements(
         if element is None:
             continue
 
-        element["idShort"] = allocator.allocate(element.get("idShort"))
+        existing_id_short = _non_empty_text(element.get("idShort"))
+        if existing_id_short is not None:
+            element["idShort"] = existing_id_short
+        else:
+            element["idShort"] = allocator.allocate(child_info.name)
         elements.append(element)
 
     return elements
@@ -303,29 +541,47 @@ async def _parse_element(
     path: str,
 ) -> dict[str, Any] | None:
     if node_info.node_class == ua.NodeClass.Variable:
-        return await _parse_property(node_info, path=path)
+        variable_children = await _get_child_infos(node_info.node)
+        _, metadata = await _extract_metadata_children(variable_children)
+        payload = _model_from_metadata(metadata)
+        if payload is not None:
+            return payload
+
+        parsed_property = await _parse_property(
+            node_info,
+            path=path,
+            explicit_category=metadata.category,
+        )
+        return _merge_metadata(parsed_property, metadata)
 
     if node_info.node_class != ua.NodeClass.Object:
         return None
 
     child_infos = await _get_child_infos(node_info.node)
-    child_infos, explicit_category = await _extract_category_child(child_infos)
+    child_infos, metadata = await _extract_metadata_children(child_infos)
+
+    if metadata.payload is not None:
+        payload = _model_from_metadata(metadata)
+        if payload is not None:
+            return payload
 
     if await _looks_like_range(child_infos):
-        return await _parse_range(
+        parsed_range = await _parse_range(
             node_info,
             child_infos,
             path=path,
-            explicit_category=explicit_category,
+            explicit_category=metadata.category,
         )
+        return _merge_metadata(parsed_range, metadata)
 
     if _looks_like_operation(child_infos):
-        return await _parse_operation(
+        parsed_operation = await _parse_operation(
             node_info,
             child_infos,
             path=path,
-            explicit_category=explicit_category,
+            explicit_category=metadata.category,
         )
+        return _merge_metadata(parsed_operation, metadata)
 
     value = await _parse_infos_as_elements(
         child_infos,
@@ -336,23 +592,24 @@ async def _parse_element(
         "idShort": node_info.name,
         "modelType": "SubmodelElementCollection",
     }
-    if explicit_category:
-        collection["category"] = explicit_category
+    if metadata.category is not None:
+        collection["category"] = metadata.category
     if value:
         collection["value"] = value
-    return collection
+
+    return _merge_metadata(collection, metadata)
 
 
 async def _parse_property(
     node_info: _NodeInfo,
     *,
     path: str,
+    explicit_category: str | None = None,
 ) -> dict[str, Any]:
     del path
     variant_type = await _read_variant_type(node_info.node)
     value = await _read_value(node_info.node)
     writable = await _is_writable(node_info.node)
-    explicit_category = await _read_category_metadata(node_info.node)
     category = explicit_category or ("VARIABLE" if writable else "CONSTANT")
 
     return {
@@ -470,20 +727,37 @@ def _looks_like_operation(child_infos: list[_NodeInfo]) -> bool:
     return True
 
 
-async def _extract_category_child(
+async def _extract_metadata_children(
     child_infos: list[_NodeInfo],
-) -> tuple[list[_NodeInfo], str | None]:
+) -> tuple[list[_NodeInfo], _NodeMetadata]:
     filtered_children: list[_NodeInfo] = []
-    category: str | None = None
+    metadata = _NodeMetadata()
 
     for child in child_infos:
-        if _is_category_metadata_candidate(child):
-            if category is None:
-                category = _normalize_category_value(await _read_value(child.node))
+        if not (child.node_class == ua.NodeClass.Variable and child.is_property):
+            filtered_children.append(child)
             continue
-        filtered_children.append(child)
 
-    return filtered_children, category
+        lowered = child.name.lower()
+        if lowered == "category":
+            if metadata.category is None:
+                metadata.category = _normalize_category_value(await _read_value(child.node))
+            continue
+
+        if child.name == _LEGACY_METADATA_PAYLOAD_NAME:
+            payload = _deserialize_metadata_payload(await _read_value(child.node))
+            if payload is not None:
+                metadata.payload = payload
+            continue
+
+        if child.name.startswith(_LEGACY_METADATA_FIELD_PREFIX):
+            key = child.name[len(_LEGACY_METADATA_FIELD_PREFIX) :]
+            metadata.fields[key] = _deserialize_metadata_value(await _read_value(child.node))
+            continue
+
+        metadata.fields[child.name] = _deserialize_metadata_value(await _read_value(child.node))
+
+    return filtered_children, metadata
 
 
 async def _get_child_infos(node: Any) -> list[_NodeInfo]:
@@ -524,6 +798,13 @@ async def _find_child_by_name(parent: Any, name: str) -> Any | None:
     return None
 
 
+def _find_info_by_name(child_infos: list[_NodeInfo], name: str) -> _NodeInfo | None:
+    for child_info in child_infos:
+        if child_info.name == name:
+            return child_info
+    return None
+
+
 async def _read_value(node: Any) -> Any:
     try:
         return await node.read_value()
@@ -538,26 +819,12 @@ async def _read_variant_type(node: Any) -> ua.VariantType:
         return ua.VariantType.String
 
 
-async def _read_category_metadata(node: Any) -> str | None:
-    child_infos = await _get_child_infos(node)
-    _, category = await _extract_category_child(child_infos)
-    return category
-
-
 async def _is_writable(node: Any) -> bool:
     try:
         access_levels = await node.get_user_access_level()
         return ua.AccessLevel.CurrentWrite in access_levels
     except Exception:
         return False
-
-
-def _is_category_metadata_candidate(child: _NodeInfo) -> bool:
-    return (
-        child.node_class == ua.NodeClass.Variable
-        and child.is_property
-        and child.name.lower() == "category"
-    )
 
 
 async def _is_property_node(node: Any) -> bool:
@@ -570,6 +837,64 @@ async def _is_property_node(node: Any) -> bool:
         return type_definition.Identifier == ua.ObjectIds.PropertyType
 
     return False
+
+
+def _model_from_metadata(metadata: _NodeMetadata) -> dict[str, Any] | None:
+    model: dict[str, Any] = {}
+    if isinstance(metadata.payload, dict):
+        model.update(metadata.payload)
+    if metadata.fields:
+        model.update(metadata.fields)
+
+    if metadata.category is not None and "category" not in model:
+        model["category"] = metadata.category
+
+    if model:
+        return model
+    return None
+
+
+def _merge_metadata(model: dict[str, Any], metadata: _NodeMetadata) -> dict[str, Any]:
+    if metadata.fields:
+        model.update(metadata.fields)
+    if metadata.category is not None:
+        model["category"] = metadata.category
+    return model
+
+
+def _deserialize_metadata_payload(raw_value: Any) -> dict[str, Any] | None:
+    if isinstance(raw_value, dict):
+        return raw_value
+
+    if not isinstance(raw_value, str):
+        return None
+
+    text = raw_value.strip()
+    if not text:
+        return None
+
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return None
+
+    if isinstance(parsed, dict):
+        return parsed
+    return None
+
+
+def _deserialize_metadata_value(raw_value: Any) -> Any:
+    if not isinstance(raw_value, str):
+        return raw_value
+
+    text = raw_value.strip()
+    if text.startswith("{") or text.startswith("["):
+        try:
+            return json.loads(text)
+        except Exception:
+            return raw_value
+
+    return raw_value
 
 
 def _normalize_category_value(raw_value: Any) -> str | None:
@@ -596,6 +921,14 @@ def _value_to_aas_string(value: Any) -> str:
     if isinstance(value, (list, dict)):
         return json.dumps(value, ensure_ascii=True, sort_keys=True)
     return str(value)
+
+
+def _non_empty_text(raw_value: Any) -> str | None:
+    if isinstance(raw_value, str):
+        text = raw_value.strip()
+        if text:
+            return text
+    return None
 
 
 def _sanitize_id_short(name: str | None) -> str:
