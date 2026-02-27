@@ -10,17 +10,20 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "asyncua>=1.1.5",
-    "jsonschema>=4.26.0"
+    "jsonschema>=4.26.0",
+    "pydantic>=2.11.0"
 ]
 
 [project.scripts]
 opcuaserver = "opcuaserver.cli:main"
+opcualoader = "opcualoader.cli:main"
 
 [tool.poetry]
 packages = [
     { include = "openaas" },
     { include = "openopc" },
-    { include = "opcuaserver" }
+    { include = "opcuaserver" },
+    { include = "opcualoader" }
 ]
 
 

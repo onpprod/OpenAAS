@@ -58,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-anonymous",
         action="store_true",
+        default=None,
         help="Allow anonymous sessions together with username/password mode.",
     )
     parser.add_argument(
