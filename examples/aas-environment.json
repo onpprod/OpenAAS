@@ -1,0 +1,42 @@
+{
+  "assetAdministrationShells": [
+    {
+      "idShort": "ExampleAAS",
+      "id": "urn:uuid:2fc9900b-d87f-4c8b-8943-bbc063873fd8",
+      "assetInformation": {
+        "assetKind": "Instance",
+        "globalAssetId": "AssetID"
+      },
+      "submodels": [
+        {
+          "type": "ModelReference",
+          "keys": [
+            {
+              "type": "Submodel",
+              "value": "urn:uuid:22006ec6-e02c-4233-8230-ccdb5e6ea671"
+            }
+          ]
+        }
+      ],
+      "modelType": "AssetAdministrationShell"
+    }
+  ],
+  "submodels": [
+    {
+      "category": "CONSTANT",
+      "idShort": "ExampleSM",
+      "id": "urn:uuid:22006ec6-e02c-4233-8230-ccdb5e6ea671",
+      "kind": "Instance",
+      "submodelElements": [
+        {
+          "category": "VARIABLE",
+          "idShort": "Prop",
+          "valueType": "xs:int",
+          "value": "1",
+          "modelType": "Property"
+        }
+      ],
+      "modelType": "Submodel"
+    }
+  ]
+}

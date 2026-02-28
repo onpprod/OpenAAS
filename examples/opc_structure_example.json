@@ -1,0 +1,69 @@
+{
+  "server": {
+    "name": "OpenOPC Example Server",
+    "endpoint": "opc.tcp://0.0.0.0:4840/openopc/example/",
+    "namespace_uri": "http://openopc.example/manufatura"
+  },
+  "nodes": [
+    {
+      "type": "folder",
+      "name": "Factory",
+      "children": [
+        {
+          "type": "object",
+          "name": "MachineA",
+          "children": [
+            {
+              "type": "variable",
+              "name": "Temperature",
+              "datatype": "float",
+              "value": 36.7,
+              "writable": false
+            },
+            {
+              "type": "variable",
+              "name": "Pressure",
+              "datatype": "float",
+              "value": 6.2,
+              "writable": false
+            },
+            {
+              "type": "variable",
+              "name": "Speed",
+              "datatype": "int32",
+              "value": 1200,
+              "writable": true
+            },
+            {
+              "type": "variable",
+              "name": "Enabled",
+              "datatype": "boolean",
+              "value": true,
+              "writable": true
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "name": "MachineB",
+          "children": [
+            {
+              "type": "variable",
+              "name": "Temperature",
+              "datatype": "float",
+              "value": 33.1,
+              "writable": false
+            },
+            {
+              "type": "variable",
+              "name": "PiecesPerMinute",
+              "datatype": "int32",
+              "value": 87,
+              "writable": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

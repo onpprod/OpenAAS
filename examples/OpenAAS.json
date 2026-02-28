@@ -1,0 +1,113 @@
+{
+  "assetAdministrationShells": [
+    {
+      "category": "CONSTANT",
+      "idShort": "OpenAASExample",
+      "displayName": [
+        {
+          "language": "en",
+          "text": "Open AAS Example"
+        }
+      ],
+      "description": [
+        {
+          "language": "en",
+          "text": "Example of OpenAAS"
+        }
+      ],
+      "administration": {
+        "version": "1",
+        "revision": "1"
+      },
+      "id": "https://openaas.onpprod.site/ids/aas/0350_5172_2062_2701",
+      "assetInformation": {
+        "assetKind": "Instance",
+        "globalAssetId": "https://openaas.onpprod.site/ids/asset/5570_5172_2062_2867",
+        "assetType": "Example"
+      },
+      "submodels": [
+        {
+          "type": "ModelReference",
+          "keys": [
+            {
+              "type": "Submodel",
+              "value": "https://openaas.onpprod.site/ids/sm/9280_5172_2062_2887"
+            }
+          ]
+        }
+      ],
+      "modelType": "AssetAdministrationShell"
+    }
+  ],
+  "submodels": [
+    {
+      "category": "CONSTANT",
+      "idShort": "OpenAASExampleSubmodel",
+      "displayName": [
+        {
+          "language": "en",
+          "text": "Open AAS Submodel"
+        }
+      ],
+      "description": [
+        {
+          "language": "en",
+          "text": "Open AAS Example Submodel"
+        }
+      ],
+      "id": "https://openaas.onpprod.site/ids/sm/9280_5172_2062_2887",
+      "kind": "Instance",
+      "submodelElements": [
+        {
+          "category": "CONSTANT",
+          "idShort": "OpenAASCollection",
+          "value": [
+            {
+              "category": "CONSTANT",
+              "idShort": "OpenAASReference",
+              "value": {
+                "type": "ModelReference",
+                "keys": [
+                  {
+                    "type": "Submodel",
+                    "value": "https://openaas.onpprod.site/ids/sm/9280_5172_2062_2887"
+                  },
+                  {
+                    "type": "Property",
+                    "value": "OpenAASProperty"
+                  }
+                ]
+              },
+              "modelType": "ReferenceElement"
+            }
+          ],
+          "modelType": "SubmodelElementCollection"
+        },
+        {
+          "category": "CONSTANT",
+          "idShort": "OpenAASList",
+          "typeValueListElement": "SubmodelElement",
+          "valueTypeListElement": "xs:float",
+          "value": [
+            {
+              "category": "VARIABLE",
+              "idShort": "OpenAASProperty1",
+              "valueType": "xs:float",
+              "value": "1.5",
+              "modelType": "Property"
+            }
+          ],
+          "modelType": "SubmodelElementList"
+        },
+        {
+          "category": "PARAMETER",
+          "idShort": "OpenAASProperty",
+          "valueType": "xs:string",
+          "value": "Property example with string",
+          "modelType": "Property"
+        }
+      ],
+      "modelType": "Submodel"
+    }
+  ]
+}
