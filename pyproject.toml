@@ -1,13 +1,26 @@
 [project]
 name = "openaas"
 version = "0.1.0"
-description = ""
+description = "OpenAAS is a Python project for Asset Administration Shell (AAS) modeling, OPC UA interoperability, and AASX packaging"
 authors = [
     {name = "onpprod",email = "otavionpproducoes@gmail.com"}
 ]
-license = {text = "MIT"}
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.13"
+classifiers = [
+    "Topic :: Utilities",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.13",
+]
+
+[tool.poetry.urls]
+"Code" = "https://github.com/onpprod/OpenAAS"
+"Bug Tracker" = "https://github.com/onpprod/OpenAAS/issues"
+
+
 dependencies = [
     "asyncua>=1.1.5",
     "jsonschema>=4.26.0",
